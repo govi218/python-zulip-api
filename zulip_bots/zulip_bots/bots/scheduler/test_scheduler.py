@@ -497,7 +497,7 @@ class TestSchedulerBot(BotTestCase):
         self.assertEqual(widget["widget_type"], "zform")
         choice = widget["extra_data"]["choices"][0]
         self.assertEqual(choice["short_name"], "Create meeting: standup")
-        self.assertEqual(choice["long_name"], "Create meeting: standup")
+        self.assertEqual(choice["long_name"], " ")
         self.assertIn("confirm standup-2024-01-01", choice["reply"])
 
     def test_confirm_creates_jitsi_link(self) -> None:

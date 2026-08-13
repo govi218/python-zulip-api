@@ -332,7 +332,7 @@ def format_schedule_widget(
                 {
                     "type": "multiple_choice",
                     "short_name": f"Create meeting: {name}",
-                    "long_name": f"Create meeting: {name}",
+                    "long_name": " ",
                     "reply": reply,
                 }
             ],
