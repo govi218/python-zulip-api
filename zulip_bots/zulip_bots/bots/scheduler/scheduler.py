@@ -463,9 +463,10 @@ class SchedulerHandler:
         if self._storage is None:
             raise RuntimeError("storage not available")
         key = self._storage_key(user_id)
-        if not self._storage.contains(key):
+        try:
+            return self._storage.get(key)
+        except KeyError:
             return None
-        return self._storage.get(key)
 
     def _register(self, user_id: int, url: str, tz: str) -> None:
         """Store an ICS URL and timezone for a user."""
@@ -627,10 +628,11 @@ class SchedulerHandler:
             bot_handler.send_reply(message, "Storage error — cannot retrieve meeting details.")
             return
         key = f"meeting:{cmd.key}"
-        if not self._storage.contains(key):
+        try:
+            details = self._storage.get(key)
+        except KeyError:
             bot_handler.send_reply(message, "Meeting not found. It may have expired.")
             return
-        details = self._storage.get(key)
         day = date.fromisoformat(details["day"])
         start_dt = _slot_to_utc_dt(day, details["start"])
         end_dt = _slot_to_utc_dt(day, details["end"])
