@@ -1,47 +1,49 @@
 Finds the earliest common available meeting time across participants
 by fetching their ICS calendar feeds, with timezone support.
 
-Each participant registers their calendar's ICS subscription URL and
-their timezone with the bot. When scheduling, the bot fetches each
-participant's ICS feed, extracts busy events (converted to UTC), inverts
-them against each person's local working hours (09:00-17:00) converted
-to UTC, intersects free time across all participants over a 2-week
-window, and replies with the earliest slot that fits the requested
-meeting duration.
+Each participant registers their calendar's ICS subscription URL with
+the bot. Timezone is detected automatically from the calendar feed.
+When scheduling, the bot fetches each participant's ICS feed, extracts
+busy events (converted to UTC), inverts them against each person's local
+working hours (09:00-17:00) converted to UTC, intersects free time across
+all participants over a 2-week window, and replies with the earliest slot
+that fits the requested meeting duration.
 
 ## Commands
 
 ### Register your calendar
 
+Get your calendar's ICS subscription URL:
+
+- [Google Calendar](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar) (only public calendars are supported; use the "See only free/busy" option)
+- [Outlook](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)
+- [Apple iCloud](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)
+- [Proton](https://proton.me/support/share-calendar-via-link)
+
+Then DM the bot or @ mention it with the ICS URL:
+
 ```
-@**Scheduler** register <your_ics_url> [timezone]
+https://calendar.google.com/calendar/ical/.../basic.ics
 ```
-
-Timezone is optional (defaults to UTC). Use IANA timezone names:
-`America/New_York`, `America/Los_Angeles`, `Europe/Paris`, etc.
-
-Get your ICS URL from your calendar provider:
-
-- **Google Calendar**: Settings → Integrate calendar → Secret address in iCal format
-- **Proton Calendar**: Settings → Calendars → Share with anyone → Create link
-- **Apple Calendar**: Calendar → Share Calendar → Public link
 
 The ICS URL is a persistent feed — you only need to register once.
+**Everyone** mentioned in a schedule request must be registered,
+otherwise the bot can't check their availability.
 
 ### Schedule a meeting
 
 ```
-@**Scheduler** schedule <duration_minutes> @**Alice** @**Bob**
+@**Scheduler** schedule meeting name 30 @**Alice** @**Bob**
 ```
 
 Example:
 
 ```
-@**Scheduler** schedule 30 @**Alice** @**Bob**
+@**Scheduler** schedule Weekly Review 45 @**Alice** @**Bob**
 ```
 
-The bot will reply with the earliest 30-minute slot where Alice and
-Bob are both free within the next 2 weeks. Times are displayed in UTC.
+The bot finds the earliest slot where everyone is free and sends a
+button to create the meeting with a video link and calendar invites.
 
 ### Help
 
@@ -51,12 +53,16 @@ Bob are both free within the next 2 weeks. Times are displayed in UTC.
 
 ## Setup
 
-1. Install the `icalendar` Python package in the bot's environment.
+1. Install dependencies:
+
+   ```
+   pip install icalendar requests countrystatecity-timezones
+   ```
 
 2. Configure the bot with a valid `zuliprc` file.
 
-3. Each participant registers their ICS URL and timezone:
-   `@**Scheduler** register <ics_url> [timezone]`
+3. Each participant registers their ICS URL by DMing or @ mentioning
+   the bot with it.
 
 ## Notes
 
