@@ -1,3 +1,3 @@
 icalendar
-libtime
+requests
 countrystatecity-timezones==1.0.5
