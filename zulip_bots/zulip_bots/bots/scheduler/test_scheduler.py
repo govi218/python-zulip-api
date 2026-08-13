@@ -178,34 +178,37 @@ class TestParseCommand(BotTestCase):
         self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
 
     def test_schedule_with_user_id(self) -> None:
-        cmd = parse_command("schedule 30 @**Alice|1** @**Bob|2**")
+        cmd = parse_command("schedule standup 30 @**Alice|1** @**Bob|2**")
         assert isinstance(cmd, ScheduleCommand)
+        self.assertEqual(cmd.name, "standup")
         self.assertEqual(cmd.duration, 30)
         self.assertEqual(len(cmd.participants), 2)
         self.assertEqual(cmd.participants[0], Mention(name="Alice", user_id=1))
         self.assertEqual(cmd.participants[1], Mention(name="Bob", user_id=2))
 
     def test_schedule_name_only(self) -> None:
-        cmd = parse_command("schedule 30 @**Alice** @**Bob**")
+        cmd = parse_command("schedule standup 30 @**Alice** @**Bob**")
         assert isinstance(cmd, ScheduleCommand)
+        self.assertEqual(cmd.name, "standup")
         self.assertEqual(cmd.duration, 30)
         self.assertEqual(len(cmd.participants), 2)
         self.assertEqual(cmd.participants[0], Mention(name="Alice", user_id=None))
         self.assertEqual(cmd.participants[1], Mention(name="Bob", user_id=None))
 
     def test_schedule_mixed(self) -> None:
-        cmd = parse_command("schedule 30 @**Alice** @**Bob|2**")
+        cmd = parse_command("schedule standup 30 @**Alice** @**Bob|2**")
         assert isinstance(cmd, ScheduleCommand)
+        self.assertEqual(cmd.name, "standup")
         self.assertEqual(len(cmd.participants), 2)
         self.assertEqual(cmd.participants[0], Mention(name="Alice", user_id=None))
         self.assertEqual(cmd.participants[1], Mention(name="Bob", user_id=2))
 
     def test_schedule_no_duration(self) -> None:
-        cmd = parse_command("schedule @**Alice**")
+        cmd = parse_command("schedule standup @**Alice**")
         self.assertIsNone(cmd)
 
     def test_schedule_missing_keyword(self) -> None:
-        cmd = parse_command("30 @**Alice** @**Bob**")
+        cmd = parse_command("standup 30 @**Alice** @**Bob**")
         self.assertIsNone(cmd)
 
     def test_empty(self) -> None:
@@ -234,7 +237,7 @@ class TestSchedulerBot(BotTestCase):
         self.assertIn("registered", reply["content"].lower())
         self.assertIn("EDT", reply["content"])
         self.assertIn("United States", reply["content"])
-        self.assertIn("run the register command again", reply["content"])
+        self.assertIn("You can change the calendar", reply["content"])
         stored = bot._storage.get("ics_url:12345")
         self.assertEqual(stored["url"], "https://calendar.google.com/calendar/ical/abc/basic.ics")
         self.assertEqual(stored["tz"], "America/New_York")
@@ -287,7 +290,7 @@ class TestSchedulerBot(BotTestCase):
             ) as mock_date:
                 mock_date.today.return_value = date(2024, 1, 1)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-                message = self.make_request_message("schedule 30 @**Alice|1** @**Bob|2**")
+                message = self.make_request_message("schedule standup 30 @**Alice|1** @**Bob|2**")
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
@@ -318,7 +321,7 @@ class TestSchedulerBot(BotTestCase):
             ) as mock_date:
                 mock_date.today.return_value = date(2024, 1, 1)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-                message = self.make_request_message("schedule 30 @**Alice** @**Bob**")
+                message = self.make_request_message("schedule standup 30 @**Alice** @**Bob**")
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
@@ -333,14 +336,14 @@ class TestSchedulerBot(BotTestCase):
             "result": "success",
             "members": [],
         }
-        message = self.make_request_message("schedule 30 @**Alice**")
+        message = self.make_request_message("schedule standup 30 @**Alice**")
         bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
         self.assertIn("user not found", reply["content"])
 
     def test_schedule_user_not_registered(self) -> None:
         bot, bot_handler = self._get_handlers()
-        message = self.make_request_message("schedule 30 @**Alice|999**")
+        message = self.make_request_message("schedule standup 30 @**Alice|999**")
         bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
         self.assertIn("no ICS URL registered", reply["content"])
@@ -359,7 +362,7 @@ class TestSchedulerBot(BotTestCase):
             ) as mock_date:
                 mock_date.today.return_value = date(2024, 1, 1)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-                message = self.make_request_message("schedule 30 @**Alice|1** @**Bob|2**")
+                message = self.make_request_message("schedule standup 30 @**Alice|1** @**Bob|2**")
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
@@ -382,7 +385,7 @@ class TestSchedulerBot(BotTestCase):
             ) as mock_date:
                 mock_date.today.return_value = date(2024, 1, 1)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-                message = self.make_request_message("schedule 30 @**Alice|1** @**Bob|2**")
+                message = self.make_request_message("schedule standup 30 @**Alice|1** @**Bob|2**")
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
@@ -405,7 +408,7 @@ class TestSchedulerBot(BotTestCase):
             ) as mock_date:
                 mock_date.today.return_value = date(2024, 1, 1)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-                message = self.make_request_message("schedule 30 @**Alice|1** @**Bob|2**")
+                message = self.make_request_message("schedule standup 30 @**Alice|1** @**Bob|2**")
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
@@ -435,7 +438,7 @@ class TestSchedulerBot(BotTestCase):
             ) as mock_date:
                 mock_date.today.return_value = date(2024, 1, 1)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-                message = self.make_request_message("schedule 30 @**Alice|1** @**Bob|2**")
+                message = self.make_request_message("schedule standup 30 @**Alice|1** @**Bob|2**")
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()

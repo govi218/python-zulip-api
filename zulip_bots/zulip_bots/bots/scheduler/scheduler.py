@@ -12,7 +12,7 @@ or simply DM the bot a URL:
 
 Then anyone can schedule a meeting:
 
-    @**Scheduler** schedule 30 @**Alice** @**Bob**
+    @**Scheduler** schedule standup 30 @**Alice** @**Bob**
 
 The bot fetches each participant's ICS feed, extracts busy events (converted
 to UTC), inverts them against each person's local working hours
@@ -102,6 +102,7 @@ class RegisterCommand:
 @dataclass
 class ScheduleCommand:
     duration: int
+    name: str
     participants: List[Mention] = field(default_factory=list)
 
 
@@ -275,8 +276,11 @@ def parse_command(content: str) -> Optional[Command]:
         return None
     content = content[len("schedule "):].strip()
 
-    parts = content.split(None, 1)
-    duration_str = parts[0]
+    parts = content.split(None, 2)
+    if len(parts) < 2:
+        return None
+    name = parts[0]
+    duration_str = parts[1]
     try:
         duration = int(duration_str)
     except ValueError:
@@ -284,14 +288,14 @@ def parse_command(content: str) -> Optional[Command]:
     if duration <= 0:
         return None
 
-    remainder = parts[1] if len(parts) > 1 else ""
+    remainder = parts[2] if len(parts) > 2 else ""
     mentioned: List[Mention] = []
     for match in MENTION_RE.finditer(remainder):
-        name = match.group(1).strip()
+        mname = match.group(1).strip()
         uid = int(match.group(2)) if match.group(2) else None
-        mentioned.append(Mention(name=name, user_id=uid))
+        mentioned.append(Mention(name=mname, user_id=uid))
 
-    return ScheduleCommand(duration=duration, participants=mentioned)
+    return ScheduleCommand(duration=duration, name=name, participants=mentioned)
 
 
 # ---------------------------------------------------------------------------
@@ -320,10 +324,10 @@ class SchedulerHandler:
             "• Apple: Calendar → Share Calendar → Public link\n\n"
             "**Schedule a meeting:**\n"
             "```\n"
-            "@**Scheduler** schedule <duration_minutes> @**Alice** @**Bob**\n"
+            "@**Scheduler** schedule <name> <duration_minutes> @**Alice** @**Bob**\n"
             "```\n"
-            "Example: @**Scheduler** schedule 30 @**Alice** @**Bob**\n"
-            "  → finds the earliest 30-minute slot where Alice and Bob are both free.\n\n"
+            "Example: @**Scheduler** schedule standup 30 @**Alice** @**Bob**\n"
+            "  → finds the earliest 30-minute slot and sends a button to create the meeting.\n\n"
             "Default working hours: 09:00-17:00 local time. Scheduling window: 14 days."
         )
 
@@ -383,7 +387,7 @@ class SchedulerHandler:
                 message,
                 "I didn't understand that. Type `help` for usage.\n\n"
                 "Register: @**Scheduler** register <ics_url>\n"
-                "Schedule: @**Scheduler** schedule 30 @**Alice** @**Bob**",
+                "Schedule: @**Scheduler** schedule <name> 30 @**Alice** @**Bob**",
             )
             return
 
@@ -433,7 +437,7 @@ class SchedulerHandler:
             bot_handler.send_reply(
                 message,
                 "Please @mention at least one participant.\n\n"
-                "Example: @**Scheduler** schedule 30 @**Alice** @**Bob**",
+                "Example: @**Scheduler** schedule standup 30 @**Alice** @**Bob**",
             )
             return
 
