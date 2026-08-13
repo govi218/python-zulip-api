@@ -2,12 +2,14 @@ Finds the earliest common available meeting time across participants
 by fetching their ICS calendar feeds, with timezone support.
 
 Each participant registers their calendar's ICS subscription URL with
-the bot. Timezone is detected automatically from the calendar feed.
-When scheduling, the bot fetches each participant's ICS feed, extracts
-busy events (converted to UTC), inverts them against each person's local
-working hours (09:00-17:00) converted to UTC, intersects free time across
-all participants over a 2-week window, and replies with the earliest slot
-that fits the requested meeting duration.
+the bot. When scheduling, the bot fetches each participant's ICS feed,
+detects their timezone from the feed, extracts busy events (converted
+to UTC), inverts them against each person's local working hours
+(09:00-17:00) converted to UTC, intersects free time across all
+participants over a 2-week window, and replies with the earliest slot
+that fits the requested meeting duration. Timezone is re-detected from
+the feed on each scheduling request, so changes (e.g. traveling) are
+picked up automatically.
 
 ## Commands
 

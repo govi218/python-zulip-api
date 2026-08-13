@@ -15,17 +15,13 @@ UTC = ZoneInfo("UTC")
 BusyEvent = Tuple[datetime, datetime]  # timezone-aware (UTC after conversion)
 
 
-def extract_timezone(url: str, timeout: int = 30) -> str:
+def _extract_timezone_from_cal(cal: Calendar) -> str:
     """
-    Fetch an ICS feed and infer the dominant timezone from event TZIDs.
+    Infer the dominant timezone from a parsed ICS calendar.
 
     Returns the most common TZID across all VEVENTs, falling back to
     VTIMEZONE blocks, then to X-WR-TIMEZONE, then to "UTC" if nothing is found.
     """
-    resp = requests.get(url, timeout=timeout)
-    resp.raise_for_status()
-    cal = Calendar.from_ical(resp.text)
-
     tzids: Counter[str] = Counter()
 
     for event in cal.walk("VEVENT"):
@@ -53,18 +49,15 @@ def extract_timezone(url: str, timeout: int = 30) -> str:
     return "UTC"
 
 
-def fetch_ics_events(url: str, timeout: int = 30) -> List[BusyEvent]:
+def _extract_events_from_cal(cal: Calendar) -> List[BusyEvent]:
     """
-    Fetch an ICS feed over HTTP and return a list of (start, end) datetime
-    tuples (converted to UTC) for busy (opaque) events.
+    Extract busy (opaque) events from a parsed ICS calendar as
+    (start, end) datetime tuples converted to UTC.
 
     Skips:
       - Events with TRANSP:TRANSPARENT (marked as "free")
       - All-day events (date-only, no time component)
     """
-    resp = requests.get(url, timeout=timeout)
-    resp.raise_for_status()
-    cal = Calendar.from_ical(resp.text)
     events: List[BusyEvent] = []
     for event in cal.walk("VEVENT"):
         transp = event.get("TRANSP")
@@ -90,6 +83,45 @@ def fetch_ics_events(url: str, timeout: int = 30) -> List[BusyEvent]:
             end_dt = end_dt.astimezone(UTC)
         events.append((start_dt, end_dt))
     return events
+
+
+def fetch_ics_feed(url: str, timeout: int = 30) -> Tuple[List[BusyEvent], str]:
+    """
+    Fetch an ICS feed over HTTP and return (busy_events, timezone).
+
+    busy_events: list of (start, end) datetime tuples in UTC.
+    timezone: IANA timezone string inferred from the feed.
+    """
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    cal = Calendar.from_ical(resp.text)
+    events = _extract_events_from_cal(cal)
+    tz = _extract_timezone_from_cal(cal)
+    return events, tz
+
+
+def extract_timezone(url: str, timeout: int = 30) -> str:
+    """
+    Fetch an ICS feed and infer the dominant timezone from event TZIDs.
+
+    Returns the most common TZID across all VEVENTs, falling back to
+    VTIMEZONE blocks, then to X-WR-TIMEZONE, then to "UTC" if nothing is found.
+    """
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    cal = Calendar.from_ical(resp.text)
+    return _extract_timezone_from_cal(cal)
+
+
+def fetch_ics_events(url: str, timeout: int = 30) -> List[BusyEvent]:
+    """
+    Fetch an ICS feed over HTTP and return a list of (start, end) datetime
+    tuples (converted to UTC) for busy (opaque) events.
+    """
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    cal = Calendar.from_ical(resp.text)
+    return _extract_events_from_cal(cal)
 
 
 def busy_to_free(

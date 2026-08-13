@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from countrystatecity_timezones import get_timezone_by_zone_name
 
-from zulip_bots.bots.scheduler.ics import BusyEvent, extract_timezone, fetch_ics_events, busy_to_free
+from zulip_bots.bots.scheduler.ics import BusyEvent, extract_timezone, fetch_ics_events, fetch_ics_feed, busy_to_free
 from zulip_bots.bots.scheduler.range_utils import (
     TimeRange,
     find_earliest_slot,
@@ -449,7 +449,7 @@ class SchedulerHandler:
         return None
 
     def _get_registration(self, user_id: int) -> Optional[Dict[str, str]]:
-        """Retrieve a registered ICS URL + timezone for a user, or None."""
+        """Retrieve a registered ICS URL for a user, or None."""
         if self._storage is None:
             raise RuntimeError("storage not available")
         key = self._storage_key(user_id)
@@ -458,12 +458,12 @@ class SchedulerHandler:
         except KeyError:
             return None
 
-    def _register(self, user_id: int, url: str, tz: str) -> None:
-        """Store an ICS URL and timezone for a user."""
+    def _register(self, user_id: int, url: str) -> None:
+        """Store an ICS URL for a user."""
         if self._storage is None:
             raise RuntimeError("storage not available")
         self._storage.put(
-            self._storage_key(user_id), {"url": url, "tz": tz}
+            self._storage_key(user_id), {"url": url}
         )
 
     def handle_message(
@@ -534,7 +534,7 @@ class SchedulerHandler:
             return
 
         try:
-            self._register(sender_id, cmd.ics_url, tz)
+            self._register(sender_id, cmd.ics_url)
         except RuntimeError:
             bot_handler.send_reply(message, "Storage error — could not save your registration.")
             return
@@ -579,19 +579,19 @@ class SchedulerHandler:
                 missing.append(f"{m.name} (no ICS URL registered)")
                 continue
             try:
-                events = fetch_ics_events(reg["url"])
+                events, tz = fetch_ics_feed(reg["url"])
             except Exception:
                 missing.append(f"{m.name} (could not fetch calendar URL)")
                 continue
-            participants_data.append(Participant(events=events, timezone=reg["tz"]))
-            participant_tzs.append(reg["tz"])
+            participants_data.append(Participant(events=events, timezone=tz))
+            participant_tzs.append(tz)
 
         if missing:
             bot_handler.send_reply(
                 message,
                 "Could not retrieve calendar data for:\n"
                 + "\n".join(f"• {m}" for m in missing)
-                + "\n\nAsk them to register: @**Scheduler** register <ics_url>",
+                + "\n\nAsk them to DM me their ICS URL to register.",
             )
             return
 

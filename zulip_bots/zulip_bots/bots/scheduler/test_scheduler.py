@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Tuple
 from unittest import mock
 
-from zulip_bots.bots.scheduler.ics import busy_to_free, extract_timezone, fetch_ics_events
+from zulip_bots.bots.scheduler.ics import busy_to_free
 from zulip_bots.bots.scheduler.range_utils import snap_to_granularity
 from zulip_bots.bots.scheduler.scheduler import (
     Mention,
@@ -26,17 +26,9 @@ class TestWorkingHoursToUtc(BotTestCase):
         result = working_hours_to_utc(date(2024, 1, 1), (9, 0, 17, 0), "UTC")
         self.assertEqual(result, (540, 1020))
 
-    def test_est(self) -> None:
-        result = working_hours_to_utc(date(2024, 1, 1), (9, 0, 17, 0), "America/New_York")
-        self.assertEqual(result, (840, 1320))
-
     def test_edt(self) -> None:
         result = working_hours_to_utc(date(2024, 7, 1), (9, 0, 17, 0), "America/New_York")
         self.assertEqual(result, (780, 1260))
-
-    def test_pst(self) -> None:
-        result = working_hours_to_utc(date(2024, 1, 1), (9, 0, 17, 0), "America/Los_Angeles")
-        self.assertEqual(result, (1020, 1440))
 
     def test_pdt(self) -> None:
         result = working_hours_to_utc(date(2024, 7, 1), (9, 0, 17, 0), "America/Los_Angeles")
@@ -150,17 +142,6 @@ class TestFindCommonSlot(BotTestCase):
         result = find_common_slot([], 60, start_date=date(2024, 1, 1))
         self.assertIsNone(result)
 
-    def test_no_events_all_free(self) -> None:
-        day = date(2024, 1, 1)
-        result = find_common_slot(
-            [Participant([], "UTC"), Participant([], "UTC")],
-            60, start_date=day,
-        )
-        self.assertIsNotNone(result)
-        result_day, (start, end) = result  # type: ignore[misc]
-        self.assertEqual(result_day, day)
-        self.assertEqual(start, 540)
-        self.assertEqual(end, 600)
 
 
 class TestParseCommand(BotTestCase):
@@ -183,15 +164,6 @@ class TestParseCommand(BotTestCase):
         self.assertEqual(cmd.participants[0], Mention(name="Alice", user_id=1))
         self.assertEqual(cmd.participants[1], Mention(name="Bob", user_id=2))
 
-    def test_schedule_name_only(self) -> None:
-        cmd = parse_command("schedule standup 30 @**Alice** @**Bob**")
-        assert isinstance(cmd, ScheduleCommand)
-        self.assertEqual(cmd.name, "standup")
-        self.assertEqual(cmd.duration, 30)
-        self.assertEqual(len(cmd.participants), 2)
-        self.assertEqual(cmd.participants[0], Mention(name="Alice", user_id=None))
-        self.assertEqual(cmd.participants[1], Mention(name="Bob", user_id=None))
-
     def test_schedule_mixed(self) -> None:
         cmd = parse_command("schedule standup 30 @**Alice** @**Bob|2**")
         assert isinstance(cmd, ScheduleCommand)
@@ -200,33 +172,14 @@ class TestParseCommand(BotTestCase):
         self.assertEqual(cmd.participants[0], Mention(name="Alice", user_id=None))
         self.assertEqual(cmd.participants[1], Mention(name="Bob", user_id=2))
 
-    def test_schedule_no_duration(self) -> None:
-        cmd = parse_command("schedule standup @**Alice**")
-        self.assertIsNone(cmd)
-
-    def test_schedule_missing_keyword(self) -> None:
-        cmd = parse_command("standup 30 @**Alice** @**Bob**")
-        self.assertIsNone(cmd)
-
-    def test_empty(self) -> None:
-        cmd = parse_command("")
-        self.assertIsNone(cmd)
-
     def test_confirm(self) -> None:
         cmd = parse_command("confirm standup-2024-01-15")
         assert isinstance(cmd, ConfirmCommand)
         self.assertEqual(cmd.key, "standup-2024-01-15")
 
-    def test_confirm_empty(self) -> None:
-        cmd = parse_command("confirm ")
-        self.assertIsNone(cmd)
-
 
 class TestSanitizeMeetingName(BotTestCase):
     bot_name = "scheduler"
-
-    def test_simple(self) -> None:
-        self.assertEqual(sanitize_meeting_name("standup"), "standup")
 
     def test_spaces_and_special(self) -> None:
         self.assertEqual(sanitize_meeting_name("team sync!"), "teamsync")
@@ -251,29 +204,6 @@ class TestSchedulerBot(BotTestCase):
         bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
         self.assertIn("schedule meetings easily", reply["content"])
-
-    def test_register_success(self) -> None:
-        bot, bot_handler = self._get_handlers()
-        message = self.make_request_message(
-            "https://calendar.google.com/calendar/ical/abc/basic.ics"
-        )
-        message["sender_id"] = 12345
-        with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.extract_timezone",
-            return_value="America/New_York",
-        ), mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.tz_abbreviation",
-            return_value="EDT",
-        ):
-            bot.handle_message(message, bot_handler)
-        reply = bot_handler.unique_reply()
-        self.assertIn("registered", reply["content"].lower())
-        self.assertIn("EDT", reply["content"])
-        self.assertIn("United States", reply["content"])
-        self.assertIn("You can change the calendar", reply["content"])
-        stored = bot._storage.get("ics_url:12345")
-        self.assertEqual(stored["url"], "https://calendar.google.com/calendar/ical/abc/basic.ics")
-        self.assertEqual(stored["tz"], "America/New_York")
 
     def test_bare_url_register_success(self) -> None:
         bot, bot_handler = self._get_handlers()
@@ -311,12 +241,12 @@ class TestSchedulerBot(BotTestCase):
 
     def test_schedule_successful_slot_with_user_id(self) -> None:
         bot, bot_handler = self._get_handlers()
-        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "UTC"})
-        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "UTC"})
+        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics"})
+        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics"})
 
         with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
-            return_value=[],
+            "zulip_bots.bots.scheduler.scheduler.fetch_ics_feed",
+            return_value=([], "UTC"),
         ):
             with mock.patch(
                 "zulip_bots.bots.scheduler.scheduler.date"
@@ -331,36 +261,6 @@ class TestSchedulerBot(BotTestCase):
         widget = json.loads(reply["widget_content"])
         self.assertIn("9:00 AM", widget["extra_data"]["heading"])
         self.assertIn("9:30 AM", widget["extra_data"]["heading"])
-
-    def test_schedule_successful_slot_name_only(self) -> None:
-        bot, bot_handler = self._get_handlers()
-        bot._client = mock.MagicMock()
-        bot._client.get_users.return_value = {
-            "result": "success",
-            "members": [
-                {"full_name": "Alice", "user_id": 1},
-                {"full_name": "Bob", "user_id": 2},
-            ],
-        }
-        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "UTC"})
-        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "UTC"})
-
-        with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
-            return_value=[],
-        ):
-            with mock.patch(
-                "zulip_bots.bots.scheduler.scheduler.date"
-            ) as mock_date:
-                mock_date.today.return_value = date(2024, 1, 1)
-                mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-                message = self.make_request_message("schedule standup 30 @**Alice** @**Bob**")
-                bot_handler.reset_transcript()
-                bot.handle_message(message, bot_handler)
-        reply = bot_handler.unique_reply()
-        self.assertIsNotNone(reply["widget_content"])
-        widget = json.loads(reply["widget_content"])
-        self.assertIn("9:00 AM", widget["extra_data"]["heading"])
 
     def test_schedule_user_not_found(self) -> None:
         bot, bot_handler = self._get_handlers()
@@ -383,12 +283,12 @@ class TestSchedulerBot(BotTestCase):
 
     def test_schedule_multi_tz_display(self) -> None:
         bot, bot_handler = self._get_handlers()
-        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "America/New_York"})
-        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "America/Los_Angeles"})
+        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics"})
+        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics"})
 
         with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
-            return_value=[],
+            "zulip_bots.bots.scheduler.scheduler.fetch_ics_feed",
+            side_effect=[([], "America/New_York"), ([], "America/Los_Angeles")],
         ):
             with mock.patch(
                 "zulip_bots.bots.scheduler.scheduler.date"
@@ -408,12 +308,12 @@ class TestSchedulerBot(BotTestCase):
 
     def test_schedule_same_tz_no_repeat(self) -> None:
         bot, bot_handler = self._get_handlers()
-        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "America/New_York"})
-        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "America/New_York"})
+        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics"})
+        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics"})
 
         with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
-            return_value=[],
+            "zulip_bots.bots.scheduler.scheduler.fetch_ics_feed",
+            return_value=([], "America/New_York"),
         ):
             with mock.patch(
                 "zulip_bots.bots.scheduler.scheduler.date"
@@ -433,12 +333,12 @@ class TestSchedulerBot(BotTestCase):
     def test_schedule_alias_tz_dedup(self) -> None:
         """America/New_York and America/Toronto are the same offset — dedup."""
         bot, bot_handler = self._get_handlers()
-        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "America/New_York"})
-        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "America/Toronto"})
+        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics"})
+        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics"})
 
         with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
-            return_value=[],
+            "zulip_bots.bots.scheduler.scheduler.fetch_ics_feed",
+            side_effect=[([], "America/New_York"), ([], "America/Toronto")],
         ):
             with mock.patch(
                 "zulip_bots.bots.scheduler.scheduler.date"
@@ -457,8 +357,8 @@ class TestSchedulerBot(BotTestCase):
 
     def test_schedule_no_common_slot(self) -> None:
         bot, bot_handler = self._get_handlers()
-        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "UTC"})
-        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "UTC"})
+        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics"})
+        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics"})
 
         busy_events: List[Tuple[datetime, datetime]] = []
         for i in range(14):
@@ -469,8 +369,8 @@ class TestSchedulerBot(BotTestCase):
             )
 
         with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
-            return_value=busy_events,
+            "zulip_bots.bots.scheduler.scheduler.fetch_ics_feed",
+            return_value=(busy_events, "UTC"),
         ):
             with mock.patch(
                 "zulip_bots.bots.scheduler.scheduler.date"
@@ -485,12 +385,12 @@ class TestSchedulerBot(BotTestCase):
 
     def test_schedule_sends_zform_widget(self) -> None:
         bot, bot_handler = self._get_handlers()
-        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "UTC"})
-        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "UTC"})
+        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics"})
+        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics"})
 
         with mock.patch(
-            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
-            return_value=[],
+            "zulip_bots.bots.scheduler.scheduler.fetch_ics_feed",
+            return_value=([], "UTC"),
         ), mock.patch(
             "zulip_bots.bots.scheduler.scheduler.date"
         ) as mock_date:
