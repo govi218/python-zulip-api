@@ -248,7 +248,7 @@ def parse_command(content: str) -> Optional[Command]:
 
     Returns ``RegisterCommand``, ``ScheduleCommand``, or ``None``.
     """
-    content = content.strip()
+    content = content.replace("\xa0", " ").strip()
     if not content:
         return None
 
