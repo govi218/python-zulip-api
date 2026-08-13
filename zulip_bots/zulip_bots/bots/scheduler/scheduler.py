@@ -478,6 +478,16 @@ class SchedulerHandler:
     def handle_message(
         self, message: Dict[str, Any], bot_handler: AbstractBotHandler
     ) -> None:
+        try:
+            self._handle_message(message, bot_handler)
+        except Exception:
+            bot_handler.send_reply(
+                message, "An error occurred. Please try again."
+            )
+
+    def _handle_message(
+        self, message: Dict[str, Any], bot_handler: AbstractBotHandler
+    ) -> None:
         content = message.get("content", "")
         # Normalize non-breaking spaces (mobile clients sometimes insert them)
         content = content.replace("\xa0", " ")
