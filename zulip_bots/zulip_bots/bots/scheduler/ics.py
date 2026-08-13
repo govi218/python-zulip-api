@@ -20,7 +20,7 @@ def extract_timezone(url: str, timeout: int = 30) -> str:
     Fetch an ICS feed and infer the dominant timezone from event TZIDs.
 
     Returns the most common TZID across all VEVENTs, falling back to
-    VTIMEZONE blocks, then to "UTC" if nothing is found.
+    VTIMEZONE blocks, then to X-WR-TIMEZONE, then to "UTC" if nothing is found.
     """
     resp = requests.get(url, timeout=timeout)
     resp.raise_for_status()
@@ -44,6 +44,12 @@ def extract_timezone(url: str, timeout: int = 30) -> str:
 
     if tzids:
         return tzids.most_common(1)[0][0]
+
+    # Calendar-level timezone (non-standard but widely supported, e.g. Google)
+    wr_tz = cal.get("X-WR-TIMEZONE")
+    if wr_tz:
+        return str(wr_tz)
+
     return "UTC"
 
 

@@ -2,9 +2,9 @@
 Zulip bot that finds common available meeting times across participants
 by fetching their ICS calendar feeds.
 
-Users register their ICS subscription URL and timezone with the bot:
+Users register their ICS subscription URL with the bot:
 
-    @**Scheduler** register https://calendar.google.com/calendar/ical/.../basic.ics America/New_York
+    @**Scheduler** register https://calendar.google.com/calendar/ical/.../basic.ics
 
 Then anyone can schedule a meeting:
 
@@ -23,6 +23,8 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 from zoneinfo import ZoneInfo
 
+from countrystatecity_timezones import get_timezone_by_zone_name
+
 from zulip_bots.bots.scheduler.ics import BusyEvent, extract_timezone, fetch_ics_events, busy_to_free
 from zulip_bots.bots.scheduler.range_utils import (
     TimeRange,
@@ -39,7 +41,6 @@ from zulip_bots.lib import AbstractBotHandler
 DEFAULT_WINDOW_DAYS = 14
 DEFAULT_WORKING_HOURS = (9, 0, 17, 0)  # 09:00-17:00 local
 DEFAULT_GRANULARITY_MINUTES = 30
-DEFAULT_TIMEZONE = "UTC"
 STORAGE_KEY_PREFIX = "ics_url"
 
 UTC = ZoneInfo("UTC")
@@ -47,7 +48,29 @@ UTC = ZoneInfo("UTC")
 # Matches @**Name** or @**Name|user_id** (user_id present when duplicate names)
 MENTION_RE = re.compile(r"@\*\*([^*|]+)(?:\|(\d+))?\*\*")
 URL_RE = re.compile(r"https?://\S+")
-TZ_RE = re.compile(r"[A-Za-z_]+/[A-Za-z_]+")
+
+# ---------------------------------------------------------------------------
+# Timezone helpers
+# ---------------------------------------------------------------------------
+
+
+def get_country_name(tz_name: str) -> Optional[str]:
+    """Get the country name for an IANA timezone."""
+    try:
+        info = get_timezone_by_zone_name(tz_name)
+        return info.countryName if info else None
+    except Exception:
+        return None
+
+
+def tz_abbreviation(tz_name: str) -> str:
+    """Return the current timezone abbreviation (e.g. EDT, EST) for an IANA zone."""
+    try:
+        tz = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+        return now.strftime("%Z")
+    except Exception:
+        return tz_name
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +93,6 @@ class Mention:
 @dataclass
 class RegisterCommand:
     ics_url: str
-    timezone: Optional[str] = None  # None means infer from ics
 
 
 @dataclass
@@ -83,7 +105,7 @@ Command = Union[RegisterCommand, ScheduleCommand]
 
 
 # ---------------------------------------------------------------------------
-# Timezone helpers
+# Working hours
 # ---------------------------------------------------------------------------
 
 
@@ -140,8 +162,11 @@ def find_common_slot(
         now = datetime.now(UTC)
 
     now_min = None
-    if now.date() == start_date:
-        now_min = now.hour * 60 + now.minute
+    if now is not None:
+        start_utc = datetime.combine(start_date, datetime.min.time(), tzinfo=UTC)
+        elapsed_min = int((now - start_utc).total_seconds() / 60)
+        if 0 <= elapsed_min < 48 * 60:
+            now_min = elapsed_min
 
     for offset in range(window_days):
         day = start_date + timedelta(days=offset)
@@ -234,9 +259,6 @@ def parse_command(content: str) -> Optional[Command]:
         if not url_match:
             return None
         url = url_match.group(0)
-        remainder = rest[url_match.end():].strip()
-        if remainder and TZ_RE.match(remainder):
-            return RegisterCommand(ics_url=url, timezone=remainder)
         return RegisterCommand(ics_url=url)
 
     if not lower.startswith("schedule "):
@@ -278,10 +300,9 @@ class SchedulerHandler:
             "I find common meeting times based on participants' ICS calendar feeds.\n\n"
             "**Register your calendar:**\n"
             "```\n"
-            "@**Scheduler** register <your_ics_url> [timezone]\n"
+            "@**Scheduler** register <your_ics_url>\n"
             "```\n"
-            "Timezone is optional (inferred from your ICS feed if omitted). "
-            "Examples: America/New_York, America/Los_Angeles, Europe/Paris.\n\n"
+            "Timezone is inferred automatically from your calendar feed.\n\n"
             "Get your ICS URL from your calendar provider:\n"
             "• Google: Settings → Integrate calendar → Secret address in iCal format\n"
             "• Proton: Settings → Calendars → Share with anyone → Create link\n"
@@ -336,6 +357,11 @@ class SchedulerHandler:
         self, message: Dict[str, Any], bot_handler: AbstractBotHandler
     ) -> None:
         content = message.get("content", "")
+        # Normalize non-breaking spaces (mobile clients sometimes insert them)
+        content = content.replace("\xa0", " ")
+        # Strip leading bot mention if present (e.g. in DMs where framework
+        # doesn't strip it, or when mention isn't at the start for stream msgs)
+        content = re.sub(r"^@\*\*[^*]+(?:\|\d+)?\*\*\s*", "", content)
         if content.strip().lower() == "help":
             bot_handler.send_reply(message, self.usage())
             return
@@ -345,7 +371,7 @@ class SchedulerHandler:
             bot_handler.send_reply(
                 message,
                 "I didn't understand that. Type `help` for usage.\n\n"
-                "Register: @**Scheduler** register <ics_url> [timezone]\n"
+                "Register: @**Scheduler** register <ics_url>\n"
                 "Schedule: @**Scheduler** schedule 30 @**Alice** @**Bob**",
             )
             return
@@ -363,29 +389,30 @@ class SchedulerHandler:
             bot_handler.send_reply(message, "Could not identify your user ID.")
             return
 
-        if cmd.timezone is not None:
-            tz = cmd.timezone
-        else:
-            try:
-                tz = extract_timezone(cmd.ics_url)
-            except Exception:
-                bot_handler.send_reply(
-                    message,
-                    "Could not fetch your timezone from your calendar. "
-                    "Please specify it explicitly:\n\n"
-                    "@**Scheduler** register <ics_url> America/New_York",
-                )
-                return
+        try:
+            tz = extract_timezone(cmd.ics_url)
+        except Exception:
+            bot_handler.send_reply(
+                message,
+                "Could not fetch your timezone from your calendar. "
+                "Please check that your ICS URL is accessible.",
+            )
+            return
 
         try:
             self._register(sender_id, cmd.ics_url, tz)
         except RuntimeError:
             bot_handler.send_reply(message, "Storage error — could not save your registration.")
             return
+
+        country = get_country_name(tz) or ""
+        country_str = f", {country}" if country else ""
+        tz_abbr = tz_abbreviation(tz)
         bot_handler.send_reply(
             message,
-            f"Calendar registered (timezone: {tz}). "
-            "I'll use this ICS feed when scheduling meetings with you.",
+            f"Calendar registered — timezone: **{tz_abbr}**{country_str}. "
+            "I'll use this calendar URL when scheduling meetings with you.\n"
+            "You can run the register command again to make changes.",
         )
 
     def _handle_schedule(
@@ -420,7 +447,7 @@ class SchedulerHandler:
             try:
                 events = fetch_ics_events(reg["url"])
             except Exception:
-                missing.append(f"{m.name} (could not fetch ICS feed)")
+                missing.append(f"{m.name} (could not fetch calendar URL)")
                 continue
             participants_data.append(Participant(events=events, timezone=reg["tz"]))
             participant_tzs.append(reg["tz"])
@@ -430,7 +457,7 @@ class SchedulerHandler:
                 message,
                 "Could not retrieve calendar data for:\n"
                 + "\n".join(f"• {m}" for m in missing)
-                + "\n\nAsk them to register: @**Scheduler** register <ics_url> [timezone]",
+                + "\n\nAsk them to register: @**Scheduler** register <ics_url>",
             )
             return
 

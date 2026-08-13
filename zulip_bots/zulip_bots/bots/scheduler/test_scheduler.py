@@ -163,21 +163,12 @@ class TestFindCommonSlot(BotTestCase):
 class TestParseCommand(BotTestCase):
     bot_name = "scheduler"
 
-    def test_register_with_tz(self) -> None:
-        cmd = parse_command(
-            "register https://calendar.google.com/calendar/ical/abc/basic.ics America/New_York"
-        )
-        assert isinstance(cmd, RegisterCommand)
-        self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
-        self.assertEqual(cmd.timezone, "America/New_York")
-
-    def test_register_no_tz(self) -> None:
+    def test_register(self) -> None:
         cmd = parse_command(
             "register https://calendar.google.com/calendar/ical/abc/basic.ics"
         )
         assert isinstance(cmd, RegisterCommand)
         self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
-        self.assertIsNone(cmd.timezone)
 
     def test_schedule_with_user_id(self) -> None:
         cmd = parse_command("schedule 30 @**Alice|1** @**Bob|2**")
@@ -221,31 +212,24 @@ class TestSchedulerBot(BotTestCase):
     def test_register_success(self) -> None:
         bot, bot_handler = self._get_handlers()
         message = self.make_request_message(
-            "register https://calendar.google.com/calendar/ical/abc/basic.ics America/New_York"
-        )
-        message["sender_id"] = 12345
-        bot.handle_message(message, bot_handler)
-        reply = bot_handler.unique_reply()
-        self.assertIn("registered", reply["content"].lower())
-        self.assertIn("America/New_York", reply["content"])
-        stored = bot._storage.get("ics_url:12345")
-        self.assertEqual(stored["url"], "https://calendar.google.com/calendar/ical/abc/basic.ics")
-        self.assertEqual(stored["tz"], "America/New_York")
-
-    def test_register_default_tz(self) -> None:
-        bot, bot_handler = self._get_handlers()
-        message = self.make_request_message(
             "register https://calendar.google.com/calendar/ical/abc/basic.ics"
         )
         message["sender_id"] = 12345
         with mock.patch(
             "zulip_bots.bots.scheduler.scheduler.extract_timezone",
             return_value="America/New_York",
+        ), mock.patch(
+            "zulip_bots.bots.scheduler.scheduler.tz_abbreviation",
+            return_value="EDT",
         ):
             bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
-        self.assertIn("America/New_York", reply["content"])
+        self.assertIn("registered", reply["content"].lower())
+        self.assertIn("EDT", reply["content"])
+        self.assertIn("United States", reply["content"])
+        self.assertIn("run the register command again", reply["content"])
         stored = bot._storage.get("ics_url:12345")
+        self.assertEqual(stored["url"], "https://calendar.google.com/calendar/ical/abc/basic.ics")
         self.assertEqual(stored["tz"], "America/New_York")
 
     def test_schedule_successful_slot_with_user_id(self) -> None:
