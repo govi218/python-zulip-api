@@ -514,6 +514,9 @@ class TestSchedulerBot(BotTestCase):
         reply = bot_handler.unique_reply()
         self.assertIn("standup", reply["content"])
         self.assertIn("meet.jit.si/standup", reply["content"])
+        self.assertIn("calendar.google.com", reply["content"])
+        self.assertIn("outlook.live.com", reply["content"])
+        self.assertIn("user_uploads", reply["content"])
 
     def test_confirm_meeting_not_found(self) -> None:
         bot, bot_handler = self._get_handlers()

@@ -25,7 +25,9 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from countrystatecity_timezones import get_timezone_by_zone_name
@@ -251,6 +253,62 @@ def format_slot_multi_tz(
 def sanitize_meeting_name(name: str) -> str:
     """Sanitize a meeting name for use in a meet.jit.si URL."""
     return re.sub(r"[^a-zA-Z0-9]", "", name)
+
+
+def _slot_to_utc_dt(day: date, minutes: int) -> datetime:
+    """Convert a day + minutes-from-midnight-UTC to a UTC datetime."""
+    return datetime(day.year, day.month, day.day, 0, 0, tzinfo=ZoneInfo("UTC")) + timedelta(
+        minutes=minutes
+    )
+
+
+def google_cal_url(name: str, start: datetime, end: datetime, location: str) -> str:
+    """Google Calendar 'add event' URL with pre-filled details."""
+    fmt = lambda dt: dt.strftime("%Y%m%dT%H%M%SZ")
+    params = {
+        "action": "TEMPLATE",
+        "text": name,
+        "dates": f"{fmt(start)}/{fmt(end)}",
+        "location": location,
+    }
+    query = "&".join(f"{k}={quote(str(v))}" for k, v in params.items())
+    return f"https://calendar.google.com/calendar/render?{query}"
+
+
+def outlook_cal_url(name: str, start: datetime, end: datetime, location: str) -> str:
+    """Outlook 'add event' URL with pre-filled details."""
+    fmt = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%S")
+    params = {
+        "path": "/calendar/action/compose",
+        "rru": "addevent",
+        "startdt": fmt(start),
+        "enddt": fmt(end),
+        "subject": name,
+        "location": location,
+    }
+    query = "&".join(f"{k}={quote(str(v))}" for k, v in params.items())
+    return f"https://outlook.live.com/calendar/0/deeplink/compose?{query}"
+
+
+def ics_content(name: str, start: datetime, end: datetime, location: str, description: str = "") -> str:
+    """Generate raw ICS calendar content for an event."""
+    fmt = lambda dt: dt.strftime("%Y%m%dT%H%M%SZ")
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Zulip Scheduler//EN",
+        "BEGIN:VEVENT",
+        f"UID:{name}-{fmt(start)}@zulip-scheduler",
+        f"DTSTAMP:{fmt(start)}",
+        f"DTSTART:{fmt(start)}",
+        f"DTEND:{fmt(end)}",
+        f"SUMMARY:{name}",
+        f"LOCATION:{location}",
+    ]
+    if description:
+        lines.append(f"DESCRIPTION:{description}")
+    lines.extend(["END:VEVENT", "END:VCALENDAR"])
+    return "\r\n".join(lines) + "\r\n"
 
 
 def format_schedule_widget(
@@ -564,14 +622,40 @@ class SchedulerHandler:
             return
         details = self._storage.get(key)
         day = date.fromisoformat(details["day"])
-        room = sanitize_meeting_name(details["name"])
+        start_dt = _slot_to_utc_dt(day, details["start"])
+        end_dt = _slot_to_utc_dt(day, details["end"])
+        name = details["name"]
+        participants = details.get("participants", [])
+        room = sanitize_meeting_name(name)
         jitsi = f"https://meet.jit.si/{room}"
+        gcal = google_cal_url(name, start_dt, end_dt, jitsi)
+        ocal = outlook_cal_url(name, start_dt, end_dt, jitsi)
+        desc = f"Meeting with {', '.join(participants)}" if participants else ""
+        ics_text = ics_content(name, start_dt, end_dt, jitsi, desc)
+
+        # Upload .ics file to Zulip so users get a download link
+        ics_link = None
+        try:
+            f = BytesIO(ics_text.encode("utf-8"))
+            f.name = f"{sanitize_meeting_name(name)}.ics"
+            resp = bot_handler.upload_file(f)
+            if resp.get("result") == "success":
+                ics_link = resp.get("uri")
+        except Exception:
+            pass
+
+        cal_links = f"[Google]({gcal}) | [Outlook]({ocal})"
+        if ics_link:
+            cal_links += f" | [Proton / Apple / .ics]({ics_link})"
+        else:
+            cal_links += f"\n\nProton / Apple / Other — save this as a `.ics` file:\n```ics\n{ics_text}\n```"
+
         bot_handler.send_reply(
             message,
-            f"**{details['name']}** — {day.strftime('%A, %B %d')} at "
-            f"{details['start'] // 60:02d}:{details['start'] % 60:02d}–"
-            f"{details['end'] // 60:02d}:{details['end'] % 60:02d} UTC\n"
-            f"Join: {jitsi}",
+            f"**{name}** — {day.strftime('%A, %B %d')} at "
+            f"{start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')} UTC\n"
+            f"Join: {jitsi}\n\n"
+            f"Add to calendar: {cal_links}",
         )
 
 
