@@ -372,19 +372,20 @@ def parse_command(content: str) -> Optional[Command]:
         return None
     content = content[len("schedule "):].strip()
 
-    parts = content.split(None, 2)
-    if len(parts) < 2:
+    # Duration is the first integer token; everything before it is the
+    # meeting name (supports multi-word names).
+    tokens = content.split()
+    duration_idx = None
+    for i, tok in enumerate(tokens):
+        if tok.isdigit() and int(tok) > 0:
+            duration_idx = i
+            break
+    if duration_idx is None or duration_idx == 0:
         return None
-    name = parts[0]
-    duration_str = parts[1]
-    try:
-        duration = int(duration_str)
-    except ValueError:
-        return None
-    if duration <= 0:
-        return None
+    name = " ".join(tokens[:duration_idx])
+    duration = int(tokens[duration_idx])
+    remainder = " ".join(tokens[duration_idx + 1:])
 
-    remainder = parts[2] if len(parts) > 2 else ""
     mentioned: List[Mention] = []
     for match in MENTION_RE.finditer(remainder):
         mname = match.group(1).strip()
@@ -408,25 +409,22 @@ class SchedulerHandler:
     def usage(self) -> str:
         return (
             "Hi, I'm here to help you schedule meetings easily!\n\n"
-            "**1. Register your calendar**\n\n"
-            "Get your calendar's ICS subscription URL:\n"
-            "• [Google Calendar](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)"
-            " — only public calendars are supported; use the \"See only free/busy\" option when sharing\n"
-            "• [Outlook](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)\n"
-            "• [Apple iCloud](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)\n"
-            "• [Proton](https://proton.me/support/share-calendar-via-link)\n\n"
-            "Then DM me or @ mention me with your ICS URL:\n"
-            "```\n"
-            "https://calendar.google.com/calendar/ical/.../basic.ics\n"
-            "```\n"
-            "Timezone is detected automatically from your feed.\n\n"
-            "**2. Schedule a meeting**\n\n"
-            "```\n"
-            "@**Scheduler** schedule <name> <duration_minutes> @**Alice** @**Bob**\n"
-            "```\n"
-            "Example: `@**Scheduler** schedule standup 30 @**Alice** @**Bob**`\n"
+            "**Register your calendar**\n\n"
+            "1. Get your calendar's ICS subscription URL:\n"
+            "  • [Google Calendar](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)"
+            "  (only public calendars are supported; use the \"See only free/busy\" option)\n"
+            "  • [Outlook](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)\n"
+            "  • [Apple iCloud](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)\n"
+            "  • [Proton](https://proton.me/support/share-calendar-via-link)\n"
+            "2. DM me or @ mention me with your ICS URL, e.g. `https://calendar.google.com/calendar/ical/.../basic.ics`\n\n---\n\n"
+            "**Schedule a meeting**\n\n"
+            "To schedule, mention me with 'schedule', the meeting name, the duration in minutes, "
+            "and @ mention others who need to join.\n\n"
+            "Example: `@**Scheduler** schedule Weekly Review 45 @**Alice** @**Bob**`\n\n"
             "The bot finds the earliest slot where everyone is free and sends a button "
             "to create the meeting with a video link and calendar invites.\n\n"
+            "Everyone mentioned in a schedule request must be registered, "
+            "otherwise the bot can't check their availability!\n\n"
             "Working hours: 09:00–17:00 local time. Scheduling window: 14 days."
         )
 
@@ -489,7 +487,14 @@ class SchedulerHandler:
         content = re.sub(r"^@\*\*[^*]+(?:\|\d+)?\*\*\s*", "", content)
         content = content.strip()
 
-        if not content or content.lower() == "help":
+        if not content:
+            bot_handler.send_reply(
+                message,
+                "Hi, I'm here to help you schedule meetings easily! "
+                "Use \"@Scheduler help\" for more information.",
+            )
+            return
+        if content.lower() == "help":
             bot_handler.send_reply(message, self.usage())
             return
 
@@ -499,7 +504,7 @@ class SchedulerHandler:
                 message,
                 "I didn't understand that. Type `help` for usage.\n\n"
                 "DM me your ICS URL to register.\n"
-                "Schedule: @**Scheduler** schedule <name> 30 @**Alice** @**Bob**",
+                "Schedule: @**Scheduler** schedule <meeting name> 30 @**Alice** @**Bob**",
             )
             return
 
@@ -656,10 +661,12 @@ class SchedulerHandler:
         else:
             cal_links += f"\n\nProton / Apple / Other — save this as a `.ics` file:\n```ics\n{ics_text}\n```"
 
+        participants_str = ", ".join(participants) if participants else "N/A"
         bot_handler.send_reply(
             message,
             f"**{name}** — {day.strftime('%A, %B %d')} at "
-            f"{start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')} UTC\n\n"
+            f"{start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')} UTC\n"
+            f"Participants: {participants_str}\n\n"
             f"{jitsi}\n\n"
             f"Add to calendar: {cal_links}",
         )
