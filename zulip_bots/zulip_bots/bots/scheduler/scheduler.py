@@ -667,7 +667,7 @@ class SchedulerHandler:
             f"**{name}** — {day.strftime('%A, %B %d')} at "
             f"{start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')} UTC\n"
             f"Participants: {participants_str}\n\n"
-            f"{jitsi}\n\n"
+            f"[Meeting Link]({jitsi})\n\n"
             f"Add to calendar: {cal_links}",
         )
 
