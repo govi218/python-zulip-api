@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timedelta
 from typing import List, Tuple
 from unittest import mock
@@ -8,9 +9,11 @@ from zulip_bots.bots.scheduler.scheduler import (
     Mention,
     RegisterCommand,
     ScheduleCommand,
+    ConfirmCommand,
     Participant,
     find_common_slot,
     parse_command,
+    sanitize_meeting_name,
     working_hours_to_utc,
 )
 from zulip_bots.test_lib import BotTestCase
@@ -215,6 +218,28 @@ class TestParseCommand(BotTestCase):
         cmd = parse_command("")
         self.assertIsNone(cmd)
 
+    def test_confirm(self) -> None:
+        cmd = parse_command("confirm standup-2024-01-15")
+        assert isinstance(cmd, ConfirmCommand)
+        self.assertEqual(cmd.key, "standup-2024-01-15")
+
+    def test_confirm_empty(self) -> None:
+        cmd = parse_command("confirm ")
+        self.assertIsNone(cmd)
+
+
+class TestSanitizeMeetingName(BotTestCase):
+    bot_name = "scheduler"
+
+    def test_simple(self) -> None:
+        self.assertEqual(sanitize_meeting_name("standup"), "standup")
+
+    def test_spaces_and_special(self) -> None:
+        self.assertEqual(sanitize_meeting_name("team sync!"), "teamsync")
+
+    def test_dashes_and_underscores(self) -> None:
+        self.assertEqual(sanitize_meeting_name("my-meeting_v2"), "mymeetingv2")
+
 
 class TestSchedulerBot(BotTestCase):
     bot_name = "scheduler"
@@ -294,10 +319,10 @@ class TestSchedulerBot(BotTestCase):
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
-        self.assertIn("Earliest common slot", reply["content"])
-        self.assertIn("9:00 AM", reply["content"])
-        self.assertIn("9:30 AM", reply["content"])
-        self.assertIn("UTC", reply["content"])
+        self.assertIsNotNone(reply["widget_content"])
+        widget = json.loads(reply["widget_content"])
+        self.assertIn("9:00 AM", widget["extra_data"]["heading"])
+        self.assertIn("9:30 AM", widget["extra_data"]["heading"])
 
     def test_schedule_successful_slot_name_only(self) -> None:
         bot, bot_handler = self._get_handlers()
@@ -325,9 +350,9 @@ class TestSchedulerBot(BotTestCase):
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
-        self.assertIn("Earliest common slot", reply["content"])
-        self.assertIn("9:00 AM", reply["content"])
-        self.assertIn("9:30 AM", reply["content"])
+        self.assertIsNotNone(reply["widget_content"])
+        widget = json.loads(reply["widget_content"])
+        self.assertIn("9:00 AM", widget["extra_data"]["heading"])
 
     def test_schedule_user_not_found(self) -> None:
         bot, bot_handler = self._get_handlers()
@@ -366,10 +391,12 @@ class TestSchedulerBot(BotTestCase):
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
-        self.assertIn("Earliest common slot", reply["content"])
+        self.assertIsNotNone(reply["widget_content"])
+        widget = json.loads(reply["widget_content"])
+        heading = widget["extra_data"]["heading"]
         # Both timezones should appear, no repeats
-        self.assertIn("EST", reply["content"])
-        self.assertIn("PST", reply["content"])
+        self.assertIn("EST", heading)
+        self.assertIn("PST", heading)
 
     def test_schedule_same_tz_no_repeat(self) -> None:
         bot, bot_handler = self._get_handlers()
@@ -389,9 +416,11 @@ class TestSchedulerBot(BotTestCase):
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
-        self.assertIn("Earliest common slot", reply["content"])
+        self.assertIsNotNone(reply["widget_content"])
+        widget = json.loads(reply["widget_content"])
+        heading = widget["extra_data"]["heading"]
         # Should appear only once (as one tz entry, not two)
-        self.assertEqual(reply["content"].count("EST"), 2)  # start + end in one entry
+        self.assertEqual(heading.count("EST"), 2)  # start + end in one entry
 
     def test_schedule_alias_tz_dedup(self) -> None:
         """America/New_York and America/Toronto are the same offset — dedup."""
@@ -412,9 +441,11 @@ class TestSchedulerBot(BotTestCase):
                 bot_handler.reset_transcript()
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
-        self.assertIn("Earliest common slot", reply["content"])
+        self.assertIsNotNone(reply["widget_content"])
+        widget = json.loads(reply["widget_content"])
+        heading = widget["extra_data"]["heading"]
         # Both resolve to EST, should only show one entry
-        self.assertEqual(reply["content"].count("EST"), 2)  # start + end in one entry
+        self.assertEqual(heading.count("EST"), 2)  # start + end in one entry
 
     def test_schedule_no_common_slot(self) -> None:
         bot, bot_handler = self._get_handlers()
@@ -443,3 +474,50 @@ class TestSchedulerBot(BotTestCase):
                 bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
         self.assertIn("No common", reply["content"])
+
+    def test_schedule_sends_zform_widget(self) -> None:
+        bot, bot_handler = self._get_handlers()
+        bot._storage.put("ics_url:1", {"url": "https://example.com/alice.ics", "tz": "UTC"})
+        bot._storage.put("ics_url:2", {"url": "https://example.com/bob.ics", "tz": "UTC"})
+
+        with mock.patch(
+            "zulip_bots.bots.scheduler.scheduler.fetch_ics_events",
+            return_value=[],
+        ), mock.patch(
+            "zulip_bots.bots.scheduler.scheduler.date"
+        ) as mock_date:
+            mock_date.today.return_value = date(2024, 1, 1)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            message = self.make_request_message("schedule standup 30 @**Alice|1** @**Bob|2**")
+            bot_handler.reset_transcript()
+            bot.handle_message(message, bot_handler)
+        reply = bot_handler.unique_reply()
+        self.assertIsNotNone(reply["widget_content"])
+        widget = json.loads(reply["widget_content"])
+        self.assertEqual(widget["widget_type"], "zform")
+        choice = widget["extra_data"]["choices"][0]
+        self.assertEqual(choice["short_name"], "Create meeting: standup")
+        self.assertEqual(choice["long_name"], "Create meeting: standup")
+        self.assertIn("confirm standup-2024-01-01", choice["reply"])
+
+    def test_confirm_creates_jitsi_link(self) -> None:
+        bot, bot_handler = self._get_handlers()
+        bot._storage.put("meeting:standup-2024-01-15", {
+            "name": "standup",
+            "day": "2024-01-15",
+            "start": 540,
+            "end": 600,
+            "participants": ["Alice", "Bob"],
+        })
+        message = self.make_request_message("confirm standup-2024-01-15")
+        bot.handle_message(message, bot_handler)
+        reply = bot_handler.unique_reply()
+        self.assertIn("standup", reply["content"])
+        self.assertIn("meet.jit.si/standup", reply["content"])
+
+    def test_confirm_meeting_not_found(self) -> None:
+        bot, bot_handler = self._get_handlers()
+        message = self.make_request_message("confirm bogus-2024-01-15")
+        bot.handle_message(message, bot_handler)
+        reply = bot_handler.unique_reply()
+        self.assertIn("not found", reply["content"].lower())

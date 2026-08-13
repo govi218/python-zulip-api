@@ -21,6 +21,7 @@ participants over a 2-week window, and replies with the earliest slot
 that fits the requested duration.
 """
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -106,7 +107,12 @@ class ScheduleCommand:
     participants: List[Mention] = field(default_factory=list)
 
 
-Command = Union[RegisterCommand, ScheduleCommand]
+@dataclass
+class ConfirmCommand:
+    key: str  # "<name>-<date>" storage key
+
+
+Command = Union[RegisterCommand, ScheduleCommand, ConfirmCommand]
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +248,41 @@ def format_slot_multi_tz(
     return " / ".join(parts)
 
 
+def sanitize_meeting_name(name: str) -> str:
+    """Sanitize a meeting name for use in a meet.jit.si URL."""
+    return re.sub(r"[^a-zA-Z0-9]", "", name)
+
+
+def format_schedule_widget(
+    name: str, day: date, start_min: int, end_min: int, timezones: List[str]
+) -> Tuple[str, str]:
+    """Build a zform JSON payload with a button to confirm the meeting slot.
+
+    Returns (content, widget_json) — content is a non-empty markdown string
+    to satisfy Zulip's message requirement.
+    """
+    time_str = format_slot_multi_tz(day, start_min, end_min, timezones)
+    heading = f"{day.strftime('%A, %B %d')} — {time_str}"
+    key = f"{name}-{day.isoformat()}"
+    reply = f"confirm {key}"
+    widget_content = {
+        "widget_type": "zform",
+        "extra_data": {
+            "type": "choices",
+            "heading": heading,
+            "choices": [
+                {
+                    "type": "multiple_choice",
+                    "short_name": f"Create meeting: {name}",
+                    "long_name": f"Create meeting: {name}",
+                    "reply": reply,
+                }
+            ],
+        },
+    }
+    return heading, json.dumps(widget_content)
+
+
 # ---------------------------------------------------------------------------
 # Message parsing
 # ---------------------------------------------------------------------------
@@ -251,7 +292,7 @@ def parse_command(content: str) -> Optional[Command]:
     """
     Parse the bot-facing message content into a typed command.
 
-    Returns ``RegisterCommand``, ``ScheduleCommand``, or ``None``.
+    Returns ``RegisterCommand``, ``ScheduleCommand``, ``ConfirmCommand``, or ``None``.
     A bare URL (with no command prefix) is treated as a register command.
     """
     content = content.replace("\xa0", " ").strip()
@@ -259,6 +300,14 @@ def parse_command(content: str) -> Optional[Command]:
         return None
 
     lower = content.lower()
+
+    # confirm <key>  (sent by zform button click; key is "<name>-<date>")
+    if lower.startswith("confirm "):
+        key = content[len("confirm "):].strip()
+        if not key:
+            return None
+        return ConfirmCommand(key=key)
+
     if lower.startswith("register "):
         rest = content[len("register "):].strip()
         url_match = URL_RE.search(rest)
@@ -395,6 +444,8 @@ class SchedulerHandler:
             self._handle_register(cmd, message, bot_handler)
         elif isinstance(cmd, ScheduleCommand):
             self._handle_schedule(cmd, message, bot_handler)
+        elif isinstance(cmd, ConfirmCommand):
+            self._handle_confirm(cmd, message, bot_handler)
 
     def _handle_register(
         self, cmd: RegisterCommand, message: Dict[str, Any], bot_handler: AbstractBotHandler
@@ -487,11 +538,40 @@ class SchedulerHandler:
             return
 
         day, (start_min, end_min) = result
-        time_str = format_slot_multi_tz(day, start_min, end_min, participant_tzs)
+        heading, widget = format_schedule_widget(cmd.name, day, start_min, end_min, participant_tzs)
+        # Save meeting details to storage for confirm lookup
+        key = f"{cmd.name}-{day.isoformat()}"
+        if self._storage is not None:
+            self._storage.put(f"meeting:{key}", {
+                "name": cmd.name,
+                "day": day.isoformat(),
+                "start": start_min,
+                "end": end_min,
+                "participants": names,
+            })
+
+        bot_handler.send_reply(message, heading, widget)
+
+    def _handle_confirm(
+        self, cmd: ConfirmCommand, message: Dict[str, Any], bot_handler: AbstractBotHandler
+    ) -> None:
+        if self._storage is None:
+            bot_handler.send_reply(message, "Storage error — cannot retrieve meeting details.")
+            return
+        key = f"meeting:{cmd.key}"
+        if not self._storage.contains(key):
+            bot_handler.send_reply(message, "Meeting not found. It may have expired.")
+            return
+        details = self._storage.get(key)
+        day = date.fromisoformat(details["day"])
+        room = sanitize_meeting_name(details["name"])
+        jitsi = f"https://meet.jit.si/{room}"
         bot_handler.send_reply(
             message,
-            f"Earliest common slot: **{day.strftime('%A, %B %d')}** "
-            f"**{time_str}** ({cmd.duration} min) with {', '.join(names)}.",
+            f"**{details['name']}** — {day.strftime('%A, %B %d')} at "
+            f"{details['start'] // 60:02d}:{details['start'] % 60:02d}–"
+            f"{details['end'] // 60:02d}:{details['end'] % 60:02d} UTC\n"
+            f"Join: {jitsi}",
         )
 
 
