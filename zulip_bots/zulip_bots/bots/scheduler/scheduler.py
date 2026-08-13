@@ -2,11 +2,8 @@
 Zulip bot that finds common available meeting times across participants
 by fetching their ICS calendar feeds.
 
-Users register their ICS subscription URL with the bot:
-
-    @**Scheduler** register https://calendar.google.com/calendar/ical/.../basic.ics
-
-or simply DM the bot a URL:
+Users register their ICS subscription URL with the bot by DMing or @ mentioning
+the bot with their URL:
 
     https://calendar.google.com/calendar/ical/.../basic.ics
 
@@ -366,15 +363,7 @@ def parse_command(content: str) -> Optional[Command]:
             return None
         return ConfirmCommand(key=key)
 
-    if lower.startswith("register "):
-        rest = content[len("register "):].strip()
-        url_match = URL_RE.search(rest)
-        if not url_match:
-            return None
-        url = url_match.group(0)
-        return RegisterCommand(ics_url=url)
-
-    # Bare URL in a DM = register
+    # Bare URL = register
     url_match = URL_RE.search(content)
     if url_match and url_match.start() == 0:
         return RegisterCommand(ics_url=url_match.group(0))
@@ -418,24 +407,27 @@ class SchedulerHandler:
 
     def usage(self) -> str:
         return (
-            "I find common meeting times based on participants' ICS calendar feeds.\n\n"
-            "**Register your calendar:**\n"
+            "Hi, I'm here to help you schedule meetings easily!\n\n"
+            "**1. Register your calendar**\n\n"
+            "Get your calendar's ICS subscription URL:\n"
+            "• [Google Calendar](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)"
+            " — only public calendars are supported; use the \"See only free/busy\" option when sharing\n"
+            "• [Outlook](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)\n"
+            "• [Apple iCloud](https://www.onecal.io/blog/how-to-get-an-ics-url-for-your-calendar)\n"
+            "• [Proton](https://proton.me/support/share-calendar-via-link)\n\n"
+            "Then DM me or @ mention me with your ICS URL:\n"
             "```\n"
-            "@**Scheduler** register <your_ics_url>\n"
+            "https://calendar.google.com/calendar/ical/.../basic.ics\n"
             "```\n"
-            "Or just DM me a URL directly.\n"
-            "Timezone is inferred automatically from your calendar feed.\n\n"
-            "Get your ICS URL from your calendar provider:\n"
-            "• Google: Settings → Integrate calendar → Secret address in iCal format\n"
-            "• Proton: Settings → Calendars → Share with anyone → Create link\n"
-            "• Apple: Calendar → Share Calendar → Public link\n\n"
-            "**Schedule a meeting:**\n"
+            "Timezone is detected automatically from your feed.\n\n"
+            "**2. Schedule a meeting**\n\n"
             "```\n"
             "@**Scheduler** schedule <name> <duration_minutes> @**Alice** @**Bob**\n"
             "```\n"
-            "Example: @**Scheduler** schedule standup 30 @**Alice** @**Bob**\n"
-            "  → finds the earliest 30-minute slot and sends a button to create the meeting.\n\n"
-            "Default working hours: 09:00-17:00 local time. Scheduling window: 14 days."
+            "Example: `@**Scheduler** schedule standup 30 @**Alice** @**Bob**`\n"
+            "The bot finds the earliest slot where everyone is free and sends a button "
+            "to create the meeting with a video link and calendar invites.\n\n"
+            "Working hours: 09:00–17:00 local time. Scheduling window: 14 days."
         )
 
     def initialize(self, bot_handler: AbstractBotHandler) -> None:
@@ -495,7 +487,9 @@ class SchedulerHandler:
         # Strip leading bot mention if present (e.g. in DMs where framework
         # doesn't strip it, or when mention isn't at the start for stream msgs)
         content = re.sub(r"^@\*\*[^*]+(?:\|\d+)?\*\*\s*", "", content)
-        if content.strip().lower() == "help":
+        content = content.strip()
+
+        if not content or content.lower() == "help":
             bot_handler.send_reply(message, self.usage())
             return
 
@@ -504,7 +498,7 @@ class SchedulerHandler:
             bot_handler.send_reply(
                 message,
                 "I didn't understand that. Type `help` for usage.\n\n"
-                "Register: @**Scheduler** register <ics_url>\n"
+                "DM me your ICS URL to register.\n"
                 "Schedule: @**Scheduler** schedule <name> 30 @**Alice** @**Bob**",
             )
             return
@@ -638,7 +632,7 @@ class SchedulerHandler:
         end_dt = _slot_to_utc_dt(day, details["end"])
         name = details["name"]
         participants = details.get("participants", [])
-        room = sanitize_meeting_name(name)
+        room = f"{sanitize_meeting_name(name)}-{day.isoformat()}"
         jitsi = f"https://meet.jit.si/{room}"
         gcal = google_cal_url(name, start_dt, end_dt, jitsi)
         ocal = outlook_cal_url(name, start_dt, end_dt, jitsi)
@@ -658,15 +652,15 @@ class SchedulerHandler:
 
         cal_links = f"[Google]({gcal}) | [Outlook]({ocal})"
         if ics_link:
-            cal_links += f" | [Proton / Apple / .ics]({ics_link})"
+            cal_links += f" | [Proton / Apple / .ics (will be saved to your downloads folder)]({ics_link})"
         else:
             cal_links += f"\n\nProton / Apple / Other — save this as a `.ics` file:\n```ics\n{ics_text}\n```"
 
         bot_handler.send_reply(
             message,
             f"**{name}** — {day.strftime('%A, %B %d')} at "
-            f"{start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')} UTC\n"
-            f"Join: {jitsi}\n\n"
+            f"{start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')} UTC\n\n"
+            f"{jitsi}\n\n"
             f"Add to calendar: {cal_links}",
         )
 

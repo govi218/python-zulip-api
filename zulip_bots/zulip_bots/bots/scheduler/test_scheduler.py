@@ -166,18 +166,12 @@ class TestFindCommonSlot(BotTestCase):
 class TestParseCommand(BotTestCase):
     bot_name = "scheduler"
 
-    def test_register(self) -> None:
-        cmd = parse_command(
-            "register https://calendar.google.com/calendar/ical/abc/basic.ics"
-        )
-        assert isinstance(cmd, RegisterCommand)
-        self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
-
     def test_bare_url_registers(self) -> None:
         cmd = parse_command(
             "https://calendar.google.com/calendar/ical/abc/basic.ics"
         )
         assert isinstance(cmd, RegisterCommand)
+        self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
         self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
 
     def test_schedule_with_user_id(self) -> None:
@@ -244,10 +238,24 @@ class TestSanitizeMeetingName(BotTestCase):
 class TestSchedulerBot(BotTestCase):
     bot_name = "scheduler"
 
+    def test_empty_mention_shows_help(self) -> None:
+        bot, bot_handler = self._get_handlers()
+        message = self.make_request_message("")
+        bot.handle_message(message, bot_handler)
+        reply = bot_handler.unique_reply()
+        self.assertIn("schedule meetings easily", reply["content"])
+
+    def test_help_shows_help(self) -> None:
+        bot, bot_handler = self._get_handlers()
+        message = self.make_request_message("help")
+        bot.handle_message(message, bot_handler)
+        reply = bot_handler.unique_reply()
+        self.assertIn("schedule meetings easily", reply["content"])
+
     def test_register_success(self) -> None:
         bot, bot_handler = self._get_handlers()
         message = self.make_request_message(
-            "register https://calendar.google.com/calendar/ical/abc/basic.ics"
+            "https://calendar.google.com/calendar/ical/abc/basic.ics"
         )
         message["sender_id"] = 12345
         with mock.patch(
@@ -513,7 +521,7 @@ class TestSchedulerBot(BotTestCase):
         bot.handle_message(message, bot_handler)
         reply = bot_handler.unique_reply()
         self.assertIn("standup", reply["content"])
-        self.assertIn("meet.jit.si/standup", reply["content"])
+        self.assertIn("meet.jit.si/standup-2024-01-15", reply["content"])
         self.assertIn("calendar.google.com", reply["content"])
         self.assertIn("outlook.live.com", reply["content"])
         self.assertIn("user_uploads", reply["content"])
