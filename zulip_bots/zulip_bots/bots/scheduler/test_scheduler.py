@@ -170,6 +170,13 @@ class TestParseCommand(BotTestCase):
         assert isinstance(cmd, RegisterCommand)
         self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
 
+    def test_bare_url_registers(self) -> None:
+        cmd = parse_command(
+            "https://calendar.google.com/calendar/ical/abc/basic.ics"
+        )
+        assert isinstance(cmd, RegisterCommand)
+        self.assertEqual(cmd.ics_url, "https://calendar.google.com/calendar/ical/abc/basic.ics")
+
     def test_schedule_with_user_id(self) -> None:
         cmd = parse_command("schedule 30 @**Alice|1** @**Bob|2**")
         assert isinstance(cmd, ScheduleCommand)
@@ -231,6 +238,40 @@ class TestSchedulerBot(BotTestCase):
         stored = bot._storage.get("ics_url:12345")
         self.assertEqual(stored["url"], "https://calendar.google.com/calendar/ical/abc/basic.ics")
         self.assertEqual(stored["tz"], "America/New_York")
+
+    def test_bare_url_register_success(self) -> None:
+        bot, bot_handler = self._get_handlers()
+        message = self.make_request_message(
+            "https://calendar.google.com/calendar/ical/abc/basic.ics"
+        )
+        message["sender_id"] = 12345
+        with mock.patch(
+            "zulip_bots.bots.scheduler.scheduler.extract_timezone",
+            return_value="America/New_York",
+        ), mock.patch(
+            "zulip_bots.bots.scheduler.scheduler.tz_abbreviation",
+            return_value="EDT",
+        ):
+            bot.handle_message(message, bot_handler)
+        reply = bot_handler.unique_reply()
+        self.assertIn("registered", reply["content"].lower())
+        stored = bot._storage.get("ics_url:12345")
+        self.assertEqual(stored["url"], "https://calendar.google.com/calendar/ical/abc/basic.ics")
+
+    def test_bare_url_not_ics(self) -> None:
+        bot, bot_handler = self._get_handlers()
+        message = self.make_request_message(
+            "https://example.com/some-random-page"
+        )
+        message["sender_id"] = 12345
+        with mock.patch(
+            "zulip_bots.bots.scheduler.scheduler.extract_timezone",
+            side_effect=Exception("not ics"),
+        ):
+            bot.handle_message(message, bot_handler)
+        reply = bot_handler.unique_reply()
+        self.assertIn("Could not fetch", reply["content"])
+        self.assertFalse(bot._storage.contains("ics_url:12345"))
 
     def test_schedule_successful_slot_with_user_id(self) -> None:
         bot, bot_handler = self._get_handlers()

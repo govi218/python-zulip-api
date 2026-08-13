@@ -6,6 +6,10 @@ Users register their ICS subscription URL with the bot:
 
     @**Scheduler** register https://calendar.google.com/calendar/ical/.../basic.ics
 
+or simply DM the bot a URL:
+
+    https://calendar.google.com/calendar/ical/.../basic.ics
+
 Then anyone can schedule a meeting:
 
     @**Scheduler** schedule 30 @**Alice** @**Bob**
@@ -247,6 +251,7 @@ def parse_command(content: str) -> Optional[Command]:
     Parse the bot-facing message content into a typed command.
 
     Returns ``RegisterCommand``, ``ScheduleCommand``, or ``None``.
+    A bare URL (with no command prefix) is treated as a register command.
     """
     content = content.replace("\xa0", " ").strip()
     if not content:
@@ -260,6 +265,11 @@ def parse_command(content: str) -> Optional[Command]:
             return None
         url = url_match.group(0)
         return RegisterCommand(ics_url=url)
+
+    # Bare URL in a DM = register
+    url_match = URL_RE.search(content)
+    if url_match and url_match.start() == 0:
+        return RegisterCommand(ics_url=url_match.group(0))
 
     if not lower.startswith("schedule "):
         return None
@@ -302,6 +312,7 @@ class SchedulerHandler:
             "```\n"
             "@**Scheduler** register <your_ics_url>\n"
             "```\n"
+            "Or just DM me a URL directly.\n"
             "Timezone is inferred automatically from your calendar feed.\n\n"
             "Get your ICS URL from your calendar provider:\n"
             "• Google: Settings → Integrate calendar → Secret address in iCal format\n"
@@ -394,8 +405,8 @@ class SchedulerHandler:
         except Exception:
             bot_handler.send_reply(
                 message,
-                "Could not fetch your timezone from your calendar. "
-                "Please check that your ICS URL is accessible.",
+                "Could not fetch your calendar. "
+                "Please check that your calendar ICS URL is correct and publicly accessible.",
             )
             return
 
@@ -411,8 +422,8 @@ class SchedulerHandler:
         bot_handler.send_reply(
             message,
             f"Calendar registered — timezone: **{tz_abbr}**{country_str}. "
-            "I'll use this calendar URL when scheduling meetings with you.\n"
-            "You can run the register command again to make changes.",
+            "I'll use this calendar to check your availabity.\n"
+            "You can change the calendar anytime by sending me another URL.",
         )
 
     def _handle_schedule(
